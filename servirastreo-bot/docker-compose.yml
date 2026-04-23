@@ -1,0 +1,93 @@
+# Stack completo: Postgres + Evolution API + Bot Servirastreo
+# Todos los secretos se leen desde la pestaña Environment de Dokploy
+# (ver archivo dokploy.env.example para saber que variables poner ahi).
+
+services:
+
+  # ---------- Base de datos de Evolution API ----------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------- Evolution API (WhatsApp) ----------
+  evolution-api:
+    image: atendai/evolution-api:v2.2.3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution
+      DATABASE_CONNECTION_CLIENT_NAME: evolution_exchange
+
+      CONFIG_SESSION_PHONE_CLIENT: Servirastreo
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      QRCODE_LIMIT: 30
+      DEL_INSTANCE: "false"
+
+      WEBHOOK_GLOBAL_ENABLED: "false"
+
+      LOG_LEVEL: ERROR
+      LOG_COLOR: "true"
+
+      SERVER_URL: ${EVOLUTION_SERVER_URL}
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - internal
+      - web
+    expose:
+      - "8080"
+
+  # ---------- Bot con IA y panel ON/OFF ----------
+  servirastreo-bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - evolution-api
+    environment:
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
+      EVOLUTION_INSTANCE: servirastreo
+
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: gpt-4o-mini
+
+      PANEL_USER: ${PANEL_USER}
+      PANEL_PASSWORD: ${PANEL_PASSWORD}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN}
+
+      PORT: 3000
+    volumes:
+      - bot_data:/app/data
+    networks:
+      - internal
+      - web
+    expose:
+      - "3000"
+
+volumes:
+  postgres_data:
+  evolution_instances:
+  bot_data:
+
+networks:
+  internal:
+  web:

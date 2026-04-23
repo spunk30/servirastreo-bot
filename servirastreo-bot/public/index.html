@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Servirastreo Bot</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: 24px;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+  h1 { margin: 0 0 8px; font-size: 24px; }
+  .subtitle { color: #94a3b8; font-size: 14px; margin-bottom: 24px; }
+
+  .card {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 16px;
+    border: 1px solid #334155;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .state-label {
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .state-on  { color: #22c55e; }
+  .state-off { color: #ef4444; }
+  .state-meta { color: #94a3b8; font-size: 13px; margin-top: 4px; }
+
+  .btn {
+    padding: 14px 28px;
+    border-radius: 10px;
+    border: 0;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.05s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-on  { background: #22c55e; color: #052e16; }
+  .btn-off { background: #ef4444; color: #450a0a; }
+
+  .conn {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    background: #334155;
+  }
+  .conn-open { background: #14532d; color: #bbf7d0; }
+  .conn-close { background: #7f1d1d; color: #fecaca; }
+
+  h2 { font-size: 16px; margin: 0 0 12px; color: #cbd5e1; }
+
+  .pending-item {
+    padding: 12px;
+    border-radius: 8px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .pending-item small { color: #64748b; }
+  .pending-item .resolve {
+    background: #334155;
+    color: #e2e8f0;
+    border: 0;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .log {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: #0f172a;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+  }
+  .log-line { color: #94a3b8; padding: 2px 0; }
+  .log-line .time { color: #64748b; margin-right: 8px; }
+
+  .empty { color: #64748b; font-size: 13px; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Servirastreo Bot</h1>
+  <div class="subtitle">Panel de control del asistente de WhatsApp</div>
+
+  <div class="card">
+    <div class="toggle-row">
+      <div>
+        <div class="state-label" id="state">Cargando...</div>
+        <div class="state-meta" id="stateMeta"></div>
+      </div>
+      <button class="btn" id="toggleBtn">...</button>
+    </div>
+    <div style="margin-top: 16px;">
+      WhatsApp: <span class="conn" id="connState">...</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Pendientes para revisar (<span id="pendingCount">0</span>)</h2>
+    <div id="pendingList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Actividad reciente</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+async function refresh() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+
+    const stateEl = document.getElementById("state");
+    const metaEl = document.getElementById("stateMeta");
+    const btn = document.getElementById("toggleBtn");
+
+    if (s.enabled) {
+      stateEl.textContent = "BOT ACTIVO";
+      stateEl.className = "state-label state-on";
+      btn.textContent = "Apagar bot";
+      btn.className = "btn btn-off";
+    } else {
+      stateEl.textContent = "BOT APAGADO";
+      stateEl.className = "state-label state-off";
+      btn.textContent = "Activar bot";
+      btn.className = "btn btn-on";
+    }
+    metaEl.textContent = s.toggledAt
+      ? "Ultimo cambio: " + new Date(s.toggledAt).toLocaleString("es-CO")
+      : "";
+
+    const conn = document.getElementById("connState");
+    const cs = s.evolution?.instance?.state || s.evolution?.state || s.evolution?.error || "desconocido";
+    conn.textContent = cs;
+    conn.className = "conn " + (cs === "open" ? "conn-open" : "conn-close");
+
+    // Pending
+    const pl = document.getElementById("pendingList");
+    document.getElementById("pendingCount").textContent = s.pending.length;
+    if (s.pending.length === 0) {
+      pl.innerHTML = '<div class="empty">Nada pendiente por ahora.</div>';
+    } else {
+      pl.innerHTML = s.pending.map(p => `
+        <div class="pending-item">
+          <div>
+            <strong>${escapeHtml(p.name)}</strong><br>
+            ${escapeHtml(p.summary)}<br>
+            <small>${new Date(p.ts).toLocaleString("es-CO")} | ${escapeHtml(p.chatId)}</small>
+          </div>
+          <button class="resolve" onclick="resolvePending('${p.ts}')">Resolver</button>
+        </div>
+      `).join("");
+    }
+
+    // Log
+    const logEl = document.getElementById("log");
+    logEl.innerHTML = s.log.map(l => `
+      <div class="log-line">
+        <span class="time">${new Date(l.ts).toLocaleTimeString("es-CO")}</span>
+        ${escapeHtml(l.text)}
+      </div>
+    `).join("") || '<div class="empty">Sin actividad todavia.</div>';
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function resolvePending(ts) {
+  await fetch("/api/pending/" + encodeURIComponent(ts) + "/resolve", { method: "POST" });
+  refresh();
+}
+
+document.getElementById("toggleBtn").addEventListener("click", async () => {
+  await fetch("/api/toggle", { method: "POST" });
+  refresh();
+});
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
