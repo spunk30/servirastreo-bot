@@ -37,6 +37,8 @@ services:
       QRCODE_LIMIT: 30
       DEL_INSTANCE: "false"
       WEBHOOK_GLOBAL_ENABLED: "false"
+       CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
       LOG_LEVEL: ERROR
       LOG_COLOR: "true"
       SERVER_URL: ${EVOLUTION_SERVER_URL}
