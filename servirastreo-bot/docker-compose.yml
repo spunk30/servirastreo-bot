@@ -63,7 +63,7 @@ services:
 
       LOG_LEVEL: INFO
       LOG_COLOR: "true"
-      LOG_BAILEYS: "true"
+    
 
       SERVER_URL: ${EVOLUTION_SERVER_URL}
     volumes:
