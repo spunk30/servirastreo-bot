@@ -36,7 +36,7 @@ services:
       CONFIG_SESSION_PHONE_NAME: Chrome
       QRCODE_LIMIT: 30
       DEL_INSTANCE: "false"
-     WEBHOOK_GLOBAL_ENABLED: "false"
+      WEBHOOK_GLOBAL_ENABLED: "false"
 
       CACHE_REDIS_ENABLED: "false"
       CACHE_LOCAL_ENABLED: "true"
