@@ -1,8 +1,9 @@
-# Stack completo: Postgres + Evolution API + Bot Servirastreo
-# Todos los secretos se leen desde la pestaña Environment de Easypanel.
+# Stack completo: Postgres + Redis + Evolution API + Bot Servirastreo
+# Todos los secretos se leen desde la pestaña Environment de Easypanel
 
 services:
 
+  # ---------- Base de datos de Evolution API ----------
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -20,29 +21,49 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------- Redis para cache de Evolution API ----------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+
+  # ---------- Evolution API (WhatsApp) ----------
   evolution-api:
     image: atendai/evolution-api:v2.2.3
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+
       DATABASE_ENABLED: "true"
       DATABASE_PROVIDER: postgresql
       DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution
       DATABASE_CONNECTION_CLIENT_NAME: evolution_exchange
+
       CONFIG_SESSION_PHONE_CLIENT: Servirastreo
       CONFIG_SESSION_PHONE_NAME: Chrome
       QRCODE_LIMIT: 30
       DEL_INSTANCE: "false"
+
       WEBHOOK_GLOBAL_ENABLED: "false"
 
-      CACHE_REDIS_ENABLED: "false"
-      CACHE_LOCAL_ENABLED: "true"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_LOCAL_ENABLED: "false"
 
       LOG_LEVEL: ERROR
       LOG_COLOR: "true"
+
       SERVER_URL: ${EVOLUTION_SERVER_URL}
     volumes:
       - evolution_instances:/evolution/instances
@@ -52,6 +73,7 @@ services:
     ports:
       - "8080:8080"
 
+  # ---------- Bot con IA y panel ON/OFF ----------
   servirastreo-bot:
     build: .
     restart: unless-stopped
@@ -61,11 +83,14 @@ services:
       EVOLUTION_API_URL: http://evolution-api:8080
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
       EVOLUTION_INSTANCE: servirastreo
+
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: gpt-4o-mini
+
       PANEL_USER: ${PANEL_USER}
       PANEL_PASSWORD: ${PANEL_PASSWORD}
       WEBHOOK_TOKEN: ${WEBHOOK_TOKEN}
+
       PORT: 3000
     volumes:
       - bot_data:/app/data
@@ -79,6 +104,7 @@ volumes:
   postgres_data:
   evolution_instances:
   bot_data:
+  redis_data:
 
 networks:
   internal:
