@@ -159,9 +159,10 @@ async function refresh() {
       : "";
 
     const conn = document.getElementById("connState");
-    const cs = s.evolution?.instance?.state || s.evolution?.state || s.evolution?.error || "desconocido";
+    const cs = s.evolution?.state || s.evolution?.instance?.state || s.evolution?.error || "desconocido";
     conn.textContent = cs;
-    conn.className = "conn " + (cs === "open" ? "conn-open" : "conn-close");
+    const openStates = ["open", "WORKING"];
+    conn.className = "conn " + (openStates.includes(cs) ? "conn-open" : "conn-close");
 
     // Pending
     const pl = document.getElementById("pendingList");
