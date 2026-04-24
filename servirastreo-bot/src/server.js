@@ -64,9 +64,24 @@ app.post("/api/pending/:ts/resolve", basicAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// ----------- Webhook de Evolution API -----------
-// Evolution envia eventos tipo messages.upsert. Configura el webhook apuntando
-// a: https://TU_DOMINIO/webhook?token=EL_TOKEN
+// ----------- Webhook de WAHA -----------
+// WAHA envia eventos tipo "message". Configurado en docker-compose.yml via
+// WHATSAPP_HOOK_URL=http://servirastreo-bot:3000/webhook?token=EL_TOKEN
+//
+// Payload de WAHA:
+// {
+//   event: "message",
+//   session: "default",
+//   payload: {
+//     id: "false_573001234567@c.us_ABC123",
+//     from: "573001234567@c.us",
+//     fromMe: false,
+//     body: "Hola",
+//     notifyName: "Juan",
+//     hasMedia: false,
+//     timestamp: 1719...
+//   }
+// }
 app.post("/webhook", async (req, res) => {
   try {
     if (WEBHOOK_TOKEN && req.query.token !== WEBHOOK_TOKEN) {
@@ -74,30 +89,22 @@ app.post("/webhook", async (req, res) => {
     }
 
     const payload = req.body || {};
-    const event = payload.event || payload.Event;
-    res.json({ ok: true }); // responder rapido a Evolution
+    const event = payload.event;
+    res.json({ ok: true }); // responder rapido a WAHA
 
     // Solo procesamos mensajes entrantes nuevos
-    if (event !== "messages.upsert") return;
+    if (event !== "message") return;
 
-    const data = payload.data || {};
-    if (data.key?.fromMe) return; // no responder a uno mismo
+    const data = payload.payload || {};
+    if (data.fromMe) return; // no responder a uno mismo
 
-    const chatId = data.key?.remoteJid;
+    const chatId = data.from;
     if (!chatId || chatId.endsWith("@g.us")) return; // ignorar grupos
 
-    // Extraer texto del mensaje (Evolution usa varios campos segun tipo)
-    const msg = data.message || {};
-    const text =
-      msg.conversation ||
-      msg.extendedTextMessage?.text ||
-      msg.imageMessage?.caption ||
-      msg.videoMessage?.caption ||
-      "";
+    const text = data.body || "";
     if (!text) return;
 
-    const pushName = data.pushName || "Cliente";
-    const toNumber = chatId.split("@")[0];
+    const pushName = data.notifyName || data._data?.notifyName || "Cliente";
 
     logEvent(`IN ${pushName}: ${text.slice(0, 80)}`);
     pushMessage(chatId, "user", text);
@@ -112,7 +119,7 @@ app.post("/webhook", async (req, res) => {
     const { reply, escalate } = await generateReply(history, text);
 
     if (reply) {
-      await sendText(toNumber, reply);
+      await sendText(chatId, reply);
       pushMessage(chatId, "assistant", reply);
       logEvent(`OUT ${pushName}: ${reply.slice(0, 80)}`);
     }
