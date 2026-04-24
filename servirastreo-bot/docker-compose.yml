@@ -1,89 +1,51 @@
-# Stack completo: Postgres + Redis + Evolution API + Bot Servirastreo
+# Stack Servirastreo Bot con WAHA (WhatsApp HTTP API)
+# Reemplaza el stack anterior basado en Evolution API.
 # Todos los secretos se leen desde la pestaña Environment de Easypanel
+# (ver dokploy.env.example para saber que variables poner ahi).
 
 services:
 
-  # ---------- Base de datos de Evolution API ----------
-  postgres:
-    image: postgres:16-alpine
+  # ---------- WAHA: API HTTP de WhatsApp ----------
+  # Dashboard: http://IP_VPS:3002/dashboard
+  # API docs:  http://IP_VPS:3002/
+  waha:
+    image: devlikeapro/waha:latest
     restart: unless-stopped
     environment:
-      POSTGRES_DB: evolution
-      POSTGRES_USER: evolution
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Clave que protege la API. Se envia como header X-Api-Key.
+      WHATSAPP_API_KEY: ${WAHA_API_KEY}
+
+      # Engine a usar (WEBJS = WhatsApp Web via Chromium, estable en Core/free)
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+
+      # No imprimir el QR en logs (evita exponerlo por accidente)
+      WAHA_PRINT_QR: "false"
+
+      # Webhook: WAHA enviara eventos al bot por HTTP
+      WHATSAPP_HOOK_URL: http://servirastreo-bot:3000/webhook?token=${WEBHOOK_TOKEN}
+      WHATSAPP_HOOK_EVENTS: message
+
+      # Credenciales del dashboard web de WAHA (Basic Auth)
+      WAHA_DASHBOARD_USERNAME: ${PANEL_USER}
+      WAHA_DASHBOARD_PASSWORD: ${PANEL_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - internal
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ---------- Redis para cache de Evolution API ----------
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    networks:
-      - internal
-
-  # ---------- Evolution API (WhatsApp) ----------
-  evolution-api:
-    image: atendai/evolution-api:v2.2.3
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    environment:
-      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
-
-      DATABASE_ENABLED: "true"
-      DATABASE_PROVIDER: postgresql
-      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution
-      DATABASE_CONNECTION_CLIENT_NAME: evolution_exchange
-
-      CONFIG_SESSION_PHONE_CLIENT: Servirastreo
-      CONFIG_SESSION_PHONE_NAME: Chrome
-      QRCODE_LIMIT: 30
-      DEL_INSTANCE: "false"
-
-      WEBHOOK_GLOBAL_ENABLED: "false"
-
-      CACHE_REDIS_ENABLED: "true"
-      CACHE_REDIS_URI: redis://redis:6379/6
-      CACHE_REDIS_PREFIX_KEY: evolution
-      CACHE_REDIS_SAVE_INSTANCES: "false"
-      CACHE_LOCAL_ENABLED: "false"
-
-      LOG_LEVEL: INFO
-      LOG_COLOR: "true"
-    
-
-      SERVER_URL: ${EVOLUTION_SERVER_URL}
-    volumes:
-      - evolution_instances:/evolution/instances
+      - waha_sessions:/app/.sessions
     networks:
       - internal
       - web
     ports:
-      - "8080:8080"
+      - "3002:3000"        # WAHA accesible en http://IP_VPS:3002
 
   # ---------- Bot con IA y panel ON/OFF ----------
   servirastreo-bot:
     build: .
     restart: unless-stopped
     depends_on:
-      - evolution-api
+      - waha
     environment:
-      EVOLUTION_API_URL: http://evolution-api:8080
-      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
-      EVOLUTION_INSTANCE: servirastreo
+      WAHA_API_URL: http://waha:3000
+      WAHA_API_KEY: ${WAHA_API_KEY}
+      WAHA_SESSION: default
 
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: gpt-4o-mini
@@ -99,13 +61,11 @@ services:
       - internal
       - web
     ports:
-      - "3001:3000"
+      - "3001:3000"        # Panel bot accesible en http://IP_VPS:3001
 
 volumes:
-  postgres_data:
-  evolution_instances:
+  waha_sessions:
   bot_data:
-  redis_data:
 
 networks:
   internal:
