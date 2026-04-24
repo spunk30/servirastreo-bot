@@ -61,8 +61,9 @@ services:
       CACHE_REDIS_SAVE_INSTANCES: "false"
       CACHE_LOCAL_ENABLED: "false"
 
-      LOG_LEVEL: ERROR
+      LOG_LEVEL: INFO
       LOG_COLOR: "true"
+      LOG_BAILEYS: "true"
 
       SERVER_URL: ${EVOLUTION_SERVER_URL}
     volumes:
