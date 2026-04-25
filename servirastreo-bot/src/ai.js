@@ -4,12 +4,47 @@ import { SYSTEM_PROMPT } from "./knowledge.js";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
-// ---------- Respuesta normal (horario de atencion) ----------
+// Adendum que se concatena al system prompt cuando estamos fuera de horario
+// laboral pero NO es una emergencia. El objetivo es que el bot siga siendo
+// util (respondiendo precios referenciales, info de planes, FAQ, soporte
+// basico) y solo escale a humano cuando realmente no pueda resolver.
+const OFF_HOURS_ADDENDUM = `
+# CONTEXTO ADICIONAL - FUERA DE HORARIO
+El mensaje del cliente esta llegando FUERA del horario de atencion humana
+(antes de las 8:00 am o despues de las 7:00 pm, hora Colombia).
+
+Tu tarea:
+1. Responde con normalidad cualquier cosa que puedas resolver tu solo:
+   - Informacion general de la empresa y los servicios
+   - Explicacion de planes (basico vs completo con app + alertas)
+   - FAQ: como instalar la app, como ver el vehiculo, como funciona el GPS
+   - Pasos de autoservicio (ej: descargar Servirastreo Pro, restablecer clave)
+   - Cualquier consulta informativa
+2. Si la consulta requiere atencion personalizada (cotizacion exacta segun
+   modelo del vehiculo, revisar cuenta, renovacion/cobro, soporte tecnico
+   con acceso a plataforma), responde lo que puedas y menciona de forma
+   natural que un asesor lo contactara al abrir el dia a las 8:00 am.
+3. Solo incluye [[ESCALAR]] al final si la consulta DE VERDAD requiere que
+   un humano la toque manana. Si la resolviste tu, NO escales.
+4. NO digas que "un asesor lo llamara en X minutos" — la atencion humana
+   es solo en la manhana.
+
+Las emergencias reales (robo/hurto o bloqueo urgente) se manejan en otro
+flujo, aqui NO las vas a ver.
+`.trim();
+
+// ---------- Respuesta normal ----------
 // history: [{role:"user"|"assistant", content}]
+// options: { offHours: boolean } - si true, agrega contexto de fuera de horario
 // returns { reply, escalate }
-export async function generateReply(history, userMessage) {
+export async function generateReply(history, userMessage, options = {}) {
+  const { offHours = false } = options;
+  const systemContent = offHours
+    ? `${SYSTEM_PROMPT}\n\n${OFF_HOURS_ADDENDUM}`
+    : SYSTEM_PROMPT;
+
   const messages = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemContent },
     ...history.map(({ role, content }) => ({ role, content })),
     { role: "user", content: userMessage }
   ];

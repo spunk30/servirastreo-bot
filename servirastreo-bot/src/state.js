@@ -13,7 +13,8 @@ const DEFAULT = {
   toggledAt: null,
   conversations: {},       // { chatId: [{role, content, ts}] }
   pending: [],             // [{chatId, name, summary, ts}]
-  log: []                  // ultimos eventos (max 200)
+  log: [],                 // ultimos eventos (max 200)
+  chatModes: {}            // { chatId: { mode: "emergency", until: ISOString } }
 };
 
 function ensureDir() {
@@ -88,4 +89,42 @@ export function logEvent(text) {
   state.log.unshift({ ts: new Date().toISOString(), text });
   if (state.log.length > 200) state.log.length = 200;
   save(state);
+}
+
+// ---------- Modo de conversacion por chat ----------
+// Se usa para mantener continuidad: si un chat entro en flujo de EMERGENCIA
+// y el cliente manda un mensaje corto de seguimiento (ej: "Byz99g"), el
+// clasificador de emergencia aislado dira NO. Pero nosotros recordamos que
+// este chat esta en modo emergencia por los proximos 60 minutos y mantenemos
+// el flujo correcto.
+
+// Duracion por defecto del modo activo (60 min). Si el cliente vuelve despues
+// de ese tiempo, arranca flujo normal.
+const DEFAULT_MODE_TTL_MS = 60 * 60 * 1000;
+
+export function setChatMode(chatId, mode, ttlMs = DEFAULT_MODE_TTL_MS) {
+  if (!state.chatModes) state.chatModes = {};
+  const until = new Date(Date.now() + ttlMs).toISOString();
+  state.chatModes[chatId] = { mode, until };
+  save(state);
+}
+
+export function getChatMode(chatId) {
+  if (!state.chatModes) return null;
+  const entry = state.chatModes[chatId];
+  if (!entry) return null;
+  // Expiro?
+  if (new Date(entry.until).getTime() < Date.now()) {
+    delete state.chatModes[chatId];
+    save(state);
+    return null;
+  }
+  return entry.mode;
+}
+
+export function clearChatMode(chatId) {
+  if (state.chatModes && state.chatModes[chatId]) {
+    delete state.chatModes[chatId];
+    save(state);
+  }
 }

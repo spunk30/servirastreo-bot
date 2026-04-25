@@ -10,7 +10,9 @@ import {
   getHistory,
   addPending,
   removePending,
-  logEvent
+  logEvent,
+  getChatMode,
+  setChatMode
 } from "./state.js";
 import { sendText, connectionState } from "./evolution.js";
 import {
@@ -208,30 +210,61 @@ app.post("/webhook", async (req, res) => {
 
     if (isBusinessHours()) {
       // ----- HORARIO LABORAL (8am-7pm) -----
+      // En horario laboral el AI responde normal. Si el chat traia modo
+      // emergencia de la noche anterior, lo limpiamos implicitamente porque
+      // ya hay humano disponible.
       const r = await generateReply(history, text);
       reply = r.reply;
       escalate = r.escalate;
     } else {
       // ----- FUERA DE HORARIO (7pm-8am) -----
-      const isEmergency = await classifyEmergency(text);
+      // Regla de continuidad:
+      //   - Si este chat ya esta en modo "emergency" (lo marcamos en el
+      //     mensaje anterior), seguimos el flujo de emergencia SIN volver
+      //     a clasificar. Esto resuelve el caso "Me robaron" -> "Byz99g",
+      //     donde el clasificador aislado diria NO.
+      //   - Si no esta en modo emergencia, lo clasificamos.
+      //   - Si la clasificacion da emergencia, marcamos modo y atendemos.
+      //   - Si no, usamos generateReply en modo offHours para que el bot
+      //     responda lo que pueda (precios, info, FAQ) y escale solo si
+      //     de verdad hace falta un humano manana.
+      const currentMode = getChatMode(chatId);
+      let isEmergency = currentMode === "emergency";
+
+      if (!isEmergency) {
+        isEmergency = await classifyEmergency(text);
+      }
 
       if (isEmergency) {
-        // Emergencia real: atender con protocolo de urgencia
-        logEvent(`EMERGENCIA ${pushName}: ${text.slice(0, 80)}`);
+        // Emergencia (nueva o en curso): atender con protocolo de urgencia
+        if (currentMode !== "emergency") {
+          logEvent(`EMERGENCIA ${pushName}: ${text.slice(0, 80)}`);
+        } else {
+          logEvent(`EMERGENCIA-seg ${pushName}: ${text.slice(0, 80)}`);
+        }
+        // Marcar / refrescar modo emergencia por 60 min para mantener el hilo
+        setChatMode(chatId, "emergency");
         const r = await generateEmergencyReply(history, text);
         reply = r.reply;
         escalate = true;
       } else {
-        // No urgente: avisar horario y agendar para la manhana
-        reply =
-          `Hola ${pushName}, gracias por escribir a Servirastreo GPS.\n\n` +
-          `Nuestro horario de atencion es ${BUSINESS_HOURS_TEXT}. ` +
-          `Tomo nota de su consulta y un asesor se comunicara con usted ` +
-          `manhana a partir de las 8:00 am.\n\n` +
-          `Si se trata de una EMERGENCIA (robo/hurto del vehiculo o ` +
-          `bloqueo remoto urgente), por favor indiquelo en su proximo ` +
-          `mensaje para atenderlo de inmediato.`;
-        escalate = true; // queda pendiente para que Deivis lo vea en la manhana
+        // No urgente y off-hours: dejar al AI responder con el contexto de
+        // fuera de horario. El mismo AI decide si necesita escalar o no.
+        const r = await generateReply(history, text, { offHours: true });
+        reply = r.reply;
+        escalate = r.escalate;
+
+        // Fallback defensivo: si por algun motivo el AI no devolvio texto,
+        // mantenemos el aviso de horario y escalamos.
+        if (!reply) {
+          reply =
+            `Hola ${pushName}, gracias por escribir a Servirastreo GPS. ` +
+            `Tomo nota de su consulta y un asesor se comunicara con usted ` +
+            `manhana a partir de las 8:00 am. Nuestro horario es ` +
+            `${BUSINESS_HOURS_TEXT}. Si es una EMERGENCIA (robo/hurto o ` +
+            `bloqueo urgente), por favor indiquelo en su proximo mensaje.`;
+          escalate = true;
+        }
       }
     }
 
