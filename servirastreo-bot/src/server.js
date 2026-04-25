@@ -19,6 +19,11 @@ import {
   generateEmergencyReply
 } from "./ai.js";
 import { isBusinessHours, BUSINESS_HOURS_TEXT } from "./hours.js";
+import {
+  isAudioMessage,
+  isNonAudioMedia,
+  transcribeVoiceNote
+} from "./voice.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -124,12 +129,71 @@ app.post("/webhook", async (req, res) => {
     if (data._data?.isStatusV3 === true) return;
     if (data._data?.broadcast === true) return;
 
-    const text = data.body || "";
-    if (!text) return;
-
     const pushName = data.notifyName || data._data?.notifyName || "Cliente";
 
-    logEvent(`IN ${pushName}: ${text.slice(0, 80)}`);
+    // ----- Resolver el TEXTO del mensaje -----
+    // El cliente puede mandar:
+    //   a) Texto puro                        -> data.body trae el texto
+    //   b) Imagen/video/audio con caption    -> data.body trae el caption
+    //   c) Nota de voz / audio sin caption   -> transcribimos con Whisper
+    //   d) Imagen/video/doc sin caption      -> respondemos pidiendo texto
+    let text = data.body || "";
+    let wasVoiceNote = false;
+
+    if (!text && isAudioMessage(data)) {
+      logEvent(`AUDIO recibido de ${pushName}, transcribiendo...`);
+      try {
+        text = await transcribeVoiceNote(data);
+      } catch (err) {
+        console.error("transcribe error:", err.message);
+        text = "";
+      }
+      wasVoiceNote = true;
+
+      if (text) {
+        logEvent(`AUDIO transcrito ${pushName}: ${text.slice(0, 80)}`);
+      } else {
+        // Fallback: no se pudo transcribir el audio
+        const fallback =
+          `Hola ${pushName}, recibimos su mensaje de voz pero no logramos ` +
+          `entenderlo bien. ¿Puede escribirnos su consulta en un mensaje ` +
+          `de texto, por favor? Si es una EMERGENCIA (robo o bloqueo ` +
+          `urgente del vehiculo), por favor descibala por escrito para ` +
+          `atenderla de inmediato.`;
+        try {
+          await sendText(chatId, fallback);
+          pushMessage(chatId, "user", "[nota de voz no transcrita]");
+          pushMessage(chatId, "assistant", fallback);
+          logEvent(`OUT ${pushName}: [audio fallback]`);
+        } catch (e) {
+          logEvent(`ERROR fallback audio: ${e.message}`);
+        }
+        return;
+      }
+    } else if (!text && isNonAudioMedia(data)) {
+      // Imagen, video, documento o sticker sin caption: el bot no los
+      // procesa hoy, responder educadamente pidiendo texto.
+      const mediaFallback =
+        `Hola ${pushName}, recibimos su archivo pero por ahora solo ` +
+        `podemos atender mensajes de texto o notas de voz. ¿Puede ` +
+        `describirnos su consulta? Si es una EMERGENCIA, por favor ` +
+        `cuentenos brevemente que sucedio.`;
+      try {
+        await sendText(chatId, mediaFallback);
+        pushMessage(chatId, "user", "[archivo multimedia sin texto]");
+        pushMessage(chatId, "assistant", mediaFallback);
+        logEvent(`OUT ${pushName}: [media fallback]`);
+      } catch (e) {
+        logEvent(`ERROR fallback media: ${e.message}`);
+      }
+      return;
+    }
+
+    if (!text) return;
+
+    // Marcar en el log si vino por voz
+    const inLabel = wasVoiceNote ? "IN-VOZ" : "IN";
+    logEvent(`${inLabel} ${pushName}: ${text.slice(0, 80)}`);
     pushMessage(chatId, "user", text);
 
     if (!getState().enabled) {
