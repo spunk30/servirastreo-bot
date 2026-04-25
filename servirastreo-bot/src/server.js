@@ -13,7 +13,12 @@ import {
   logEvent
 } from "./state.js";
 import { sendText, connectionState } from "./evolution.js";
-import { generateReply } from "./ai.js";
+import {
+  generateReply,
+  classifyEmergency,
+  generateEmergencyReply
+} from "./ai.js";
+import { isBusinessHours, BUSINESS_HOURS_TEXT } from "./hours.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -99,7 +104,25 @@ app.post("/webhook", async (req, res) => {
     if (data.fromMe) return; // no responder a uno mismo
 
     const chatId = data.from;
-    if (!chatId || chatId.endsWith("@g.us")) return; // ignorar grupos
+    if (!chatId) return;
+
+    // Filtrar todo lo que NO sea una conversacion 1-a-1 con una persona.
+    // Esto evita que el bot responda (y termine publicando) en:
+    //   - Grupos:                      *@g.us
+    //   - Estados / historias / lists: status@broadcast, *@broadcast
+    //   - Canales / newsletters:       *@newsletter
+    if (
+      chatId.endsWith("@g.us") ||
+      chatId.endsWith("@broadcast") ||
+      chatId.endsWith("@newsletter") ||
+      chatId.includes("status@")
+    ) return;
+
+    // Defensa extra: WAHA a veces marca explicitamente los estados con
+    // estos flags en el payload. Si vienen, ignorar.
+    if (data.broadcast === true) return;
+    if (data._data?.isStatusV3 === true) return;
+    if (data._data?.broadcast === true) return;
 
     const text = data.body || "";
     if (!text) return;
@@ -114,9 +137,39 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Bot encendido: generar respuesta con IA
+    // Bot encendido: decidir flujo segun horario de atencion
     const history = getHistory(chatId).slice(0, -1); // excluir el que acabamos de agregar
-    const { reply, escalate } = await generateReply(history, text);
+    let reply = "";
+    let escalate = false;
+
+    if (isBusinessHours()) {
+      // ----- HORARIO LABORAL (8am-7pm) -----
+      const r = await generateReply(history, text);
+      reply = r.reply;
+      escalate = r.escalate;
+    } else {
+      // ----- FUERA DE HORARIO (7pm-8am) -----
+      const isEmergency = await classifyEmergency(text);
+
+      if (isEmergency) {
+        // Emergencia real: atender con protocolo de urgencia
+        logEvent(`EMERGENCIA ${pushName}: ${text.slice(0, 80)}`);
+        const r = await generateEmergencyReply(history, text);
+        reply = r.reply;
+        escalate = true;
+      } else {
+        // No urgente: avisar horario y agendar para la manhana
+        reply =
+          `Hola ${pushName}, gracias por escribir a Servirastreo GPS.\n\n` +
+          `Nuestro horario de atencion es ${BUSINESS_HOURS_TEXT}. ` +
+          `Tomo nota de su consulta y un asesor se comunicara con usted ` +
+          `manhana a partir de las 8:00 am.\n\n` +
+          `Si se trata de una EMERGENCIA (robo/hurto del vehiculo o ` +
+          `bloqueo remoto urgente), por favor indiquelo en su proximo ` +
+          `mensaje para atenderlo de inmediato.`;
+        escalate = true; // queda pendiente para que Deivis lo vea en la manhana
+      }
+    }
 
     if (reply) {
       await sendText(chatId, reply);
